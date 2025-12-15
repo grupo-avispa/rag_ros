@@ -144,6 +144,19 @@ class RAGServer:
         else:
             logging.warning(msg)
 
+    def _log_error(self, msg: str) -> None:
+        """Log error message using ROS2 logger or Python logging.
+
+        Parameters
+        ----------
+        msg : str
+            Message to log.
+        """
+        if self.logger is not None:
+            self.logger.error(msg)
+        else:
+            logging.error(msg)
+
     def _setup_rag(self) -> None:
         """Load documents, build embeddings and initialize the retriever."""
         docs: List[Document] = []
@@ -171,17 +184,20 @@ class RAGServer:
             self._log_info('Retriever initialized successfully')
 
         except (ImportError, RuntimeError, ValueError) as e:
-            logging.error(f'Error creating vector database: {e}')
+            self._log_error(f'Error creating vector database: {e}')
             return
 
         # Check for documents that are not in the vector store
         get_db_info = self.vector_db.get()
         loaded_docs: List[str] = []
 
-        for metadata in get_db_info['metadatas']:
-            if metadata['source'] not in loaded_docs:
-                loaded_docs.append(metadata['source'])
-        self._log_info(f'Loaded documents in vector store: {loaded_docs}')
+        if get_db_info and get_db_info.get('metadatas'):
+            for metadata in get_db_info['metadatas']:
+                if metadata and metadata.get('source') not in loaded_docs:
+                    loaded_docs.append(metadata.get('source'))
+            self._log_info(f'Loaded documents in vector store: {loaded_docs}')
+        else:
+            self._log_info('Vector store is empty, no documents loaded')
 
         # Load CSV files
         for file in self.csv_files:
@@ -190,7 +206,7 @@ class RAGServer:
                     self._log_debug(f'File [{file}] not in vector store, adding...')
                     loaders.append(CSVLoader(file_path=file))
                 except (FileNotFoundError, PermissionError, ValueError) as e:
-                    logging.error(f'Error loading CSV file {file}: {e}')
+                    self._log_error(f'Error loading CSV file {file}: {e}')
                     continue
 
         # Load PDF files
@@ -200,7 +216,7 @@ class RAGServer:
                     self._log_debug(f'File [{file}] not in vector store, adding...')
                     loaders.append(PyPDFLoader(file_path=file))
                 except (FileNotFoundError, PermissionError, ValueError) as e:
-                    logging.error(f'Error loading PDF file {file}: {e}')
+                    self._log_error(f'Error loading PDF file {file}: {e}')
                     continue
 
         # Add new documents to the vector store
@@ -209,7 +225,7 @@ class RAGServer:
                 new_loaded_docs = loader.load()
                 docs.extend(new_loaded_docs)
             except (FileNotFoundError, PermissionError, ValueError) as e:
-                logging.error(f'Error loading documents from {loader}: {e}')
+                self._log_error(f'Error loading documents from {loader}: {e}')
                 continue
 
         # Split documents into chunks
@@ -219,10 +235,10 @@ class RAGServer:
                 self._log_info(f'Created new {len(docs_chunked)} document chunks')
                 self.vector_db.add_documents(docs_chunked)
             except (ValueError, AttributeError) as e:
-                logging.error(f'Error splitting documents: {e}')
+                self._log_error(f'Error splitting documents: {e}')
                 return
 
-    async def retrieve_documents(self, query: str, k: int = 8) -> str:
+    def retrieve_documents(self, query: str, k: int = 8) -> str:
         """Return top-k document chunks for `query` as a single string.
 
         Parameters:
@@ -242,7 +258,7 @@ class RAGServer:
 
         if self.retriever is None:
             error_msg = 'Retriever not initialized.'
-            logging.error(error_msg)
+            self._log_error(error_msg)
             raise ValueError(error_msg)
 
         try:
@@ -260,6 +276,7 @@ class RAGServer:
             results: List[Dict[str, Any]] = []
             for i, doc in enumerate(docs):
                 # Include source metadata if available
+                source = 'Unknown source'
                 if hasattr(doc, 'metadata') and doc.metadata:
                     source = doc.metadata.get('source', 'Unknown source')
 
@@ -289,7 +306,7 @@ class RAGServer:
         # Handle errors during retrieval (empty JSON is returned)
         except (ValueError, RuntimeError, AttributeError) as e:
             error_msg = f'Error during document retrieval: {e}'
-            logging.error(error_msg)
+            self._log_error(error_msg)
             empty_response = {
                 'status': 'success',
                 'message': 'No relevant documents found for your question.',
@@ -328,12 +345,25 @@ class RAGServer:
         """
         if self.vector_db is None:
             error_msg = 'Vector database not initialized.'
-            logging.error(error_msg)
+            self._log_error(error_msg)
+            return False
+
+        if not text or not text.strip():
+            error_msg = 'Cannot store empty document text.'
+            self._log_error(error_msg)
             return False
 
         try:
             # Create a Document object with the provided text and metadata
-            doc_metadata = metadata or {}
+            doc_metadata = {}
+            if metadata and isinstance(metadata, dict):
+                doc_metadata = metadata
+            else:
+                # If no metadata provided, add a default source identifier
+                doc_metadata = {'source': 'stored_document'}
+
+            self._log_debug(f'Storing document with metadata: {doc_metadata}')
+
             document = Document(page_content=text, metadata=doc_metadata)
 
             # Split the document into chunks
@@ -346,10 +376,11 @@ class RAGServer:
             # Add the chunks to the vector database
             self.vector_db.add_documents(docs_chunked)
 
-            self._log_info(f'Stored document with {len(docs_chunked)} chunks')
+            self._log_info(
+                f'Stored document with {len(docs_chunked)} chunks and metadata: {doc_metadata}')
             return True
 
         except (ValueError, AttributeError) as e:
             error_msg = f'Error storing document: {e}'
-            logging.error(error_msg)
+            self._log_warning(error_msg)
             return False
