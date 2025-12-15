@@ -18,6 +18,7 @@
 import json
 from rag_ros.rag_server import RAGServer
 from llm_interactions_msgs.srv import RetrieveDocuments, StoreDocument
+from llm_interactions_msgs.msg import Document
 
 import rclpy
 from rclpy.node import Node
@@ -130,11 +131,19 @@ class RAGService(Node):
             result_json = self.rag_server.retrieve_documents(query, k=k)
             result_dict = json.loads(result_json)
 
-            # Populate response
+            # Populate response with status and metadata
             response.status = result_dict['status']
             response.message = result_dict['message']
             response.total_results = result_dict['total_results']
-            response.results_json = result_json
+
+            # Convert results to Document messages
+            response.results = []
+            for doc_data in result_dict['results']:
+                doc = Document()
+                doc.doc_id = doc_data['doc_id']
+                doc.source = doc_data['source']
+                doc.content = doc_data['content']
+                response.results.append(doc)
 
             self.get_logger().info(
                 f'Retrieved {response.total_results} documents for query: "{query}"'
@@ -145,13 +154,7 @@ class RAGService(Node):
             response.status = 'error'
             response.message = str(e)
             response.total_results = 0
-            response.results_json = json.dumps({
-                'status': 'error',
-                'message': str(e),
-                'query': query,
-                'total_results': 0,
-                'results': []
-            })
+            response.results = []
 
         return response
 
