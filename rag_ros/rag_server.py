@@ -256,8 +256,8 @@ class RAGServer:
         self._log_info(f'Starting document retrieval for query: "{query}"')
         self._log_debug(f'Requested {k} documents')
 
-        if self.retriever is None:
-            error_msg = 'Retriever not initialized.'
+        if self.retriever is None or self.vector_db is None:
+            error_msg = 'Retriever or vector database not initialized.'
             self._log_error(error_msg)
             raise ValueError(error_msg)
 
@@ -265,8 +265,8 @@ class RAGServer:
             self._log_info('Searching vector database...')
 
             # Perform the retrieval
-            retriever_with_k = self.retriever.with_config(
-                configurable={'k': k}
+            retriever_with_k = self.vector_db.as_retriever(
+                search_kwargs={"k": k}
             )
             docs = retriever_with_k.invoke(query)
 
