@@ -67,14 +67,14 @@ ROS 2 service node for RAG operations.
     Retrieve relevant documents from the vector database based on a query.
 
     **Request:**
-    - `query` (string): The query string to search for
-    - `k` (int32): Number of documents to retrieve
+    - `query` (string): The input query to retrieve relevant documents
+    - `k` (int32): Number of documents to retrieve (default: 8)
 
     **Response:**
-    - `status` (string): Operation status
+    - `status` (string): Response status
     - `message` (string): Status message
-    - `total_results` (int32): Number of documents retrieved
-    - `results_json` (string): Retrieved documents in JSON format
+    - `total_results` (int32): Total number of documents retrieved
+    - `results` (Document[]): Array of retrieved documents from ChromaDB
 
 * **`store_document`** ([llm_interactions_msgs/srv/StoreDocument])
 
