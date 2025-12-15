@@ -270,8 +270,6 @@ class RAGServer:
             )
             docs = retriever_with_k.invoke(query)
 
-            self._log_info(f'Retrieved {len(docs)} relevant documents')
-
             # Generate a formatted text response from the retrieved documents
             results: List[Dict[str, Any]] = []
             for i, doc in enumerate(docs):

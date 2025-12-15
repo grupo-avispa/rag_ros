@@ -52,7 +52,6 @@ class RAGService(Node):
                 chroma_directory=self.chroma_directory,
                 k=self.default_k,
             )
-            self.get_logger().info('RAG server initialized successfully')
         except Exception as e:
             self.get_logger().error(f'Failed to initialize RAG server: {e}')
             raise
@@ -76,7 +75,7 @@ class RAGService(Node):
             callback_group=self.group
         )
 
-        self.get_logger().info('RAG Service node has been started.')
+        self.get_logger().info('RAG service node has been started.')
 
     def get_params(self) -> None:
         """Retrieve and configure ROS2 parameters.
