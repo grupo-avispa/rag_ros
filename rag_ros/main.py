@@ -16,15 +16,26 @@
 """RAG Service Node for ROS2."""
 
 import json
-from rag_ros.rag_server import RAGServer
-from llm_interactions_msgs.srv import RetrieveDocuments, StoreDocument
-from llm_interactions_msgs.msg import Document, Metadata
+from typing import Any, Dict, Optional
 
 import rclpy
-from rclpy.node import Node
-from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
-from rclpy.callback_groups import ReentrantCallbackGroup
 from rcl_interfaces.msg import Log
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
+from rclpy.node import Node
+
+from llm_interactions_msgs.msg import Document, Metadata
+from llm_interactions_msgs.srv import RetrieveDocuments, StoreDocument
+from rag_ros.rag_server import RAGServer
+
+# Log level mapping
+LOG_LEVEL_NAMES = {
+    10: 'DEBUG',
+    20: 'INFO',
+    30: 'WARN',
+    40: 'ERROR',
+    50: 'FATAL',
+}
 
 
 class RAGService(Node):
@@ -42,12 +53,66 @@ class RAGService(Node):
         """Initialize the RAG Service node."""
         super().__init__('rag_node')
 
-        # Retrieve ROS2 parameters
-        self.get_params()
+        # Initialize parameters
+        self._declare_and_get_parameters()
 
-        # Initialize the RAG server
+        # Initialize RAG server
+        self.rag_server = self._initialize_rag_server()
+
+        # Setup ROS2 interfaces
+        self.group = ReentrantCallbackGroup()
+        self._create_services()
+        self._create_subscriptions()
+
+        self.get_logger().info('RAG service node has been started.')
+
+    def _declare_and_get_parameters(self) -> None:
+        """Declare and retrieve all ROS2 parameters."""
+        # Chroma directory
+        self.declare_parameter('chroma_directory', './chroma_db')
+        self.chroma_directory = self.get_parameter(
+            'chroma_directory').get_parameter_value().string_value
+        self.get_logger().info(
+            f'Parameter chroma_directory: [{self.chroma_directory}]')
+
+        # Embedding model
+        self.declare_parameter(
+            'embedding_model',
+            'sentence-transformers/all-MiniLM-L6-v2'
+        )
+        self.embedding_model = self.get_parameter(
+            'embedding_model').get_parameter_value().string_value
+        self.get_logger().info(
+            f'Parameter embedding_model: [{self.embedding_model}]')
+
+        # Top k documents
+        self.declare_parameter('top_k', 8)
+        self.top_k = self.get_parameter(
+            'top_k').get_parameter_value().integer_value
+        self.get_logger().info(f'Parameter top_k: [{self.top_k}]')
+
+        # Hybrid search
+        self.declare_parameter('use_hybrid_search', True)
+        self.use_hybrid_search = self.get_parameter(
+            'use_hybrid_search').get_parameter_value().bool_value
+        self.get_logger().info(
+            f'Parameter use_hybrid_search: [{self.use_hybrid_search}]')
+
+    def _initialize_rag_server(self) -> RAGServer:
+        """Initialize the RAG server with configured parameters.
+
+        Returns
+        -------
+        RAGServer
+            Initialized RAG server instance.
+
+        Raises
+        ------
+        Exception
+            If RAG server initialization fails.
+        """
         try:
-            self.rag_server = RAGServer(
+            return RAGServer(
                 logger=self.get_logger(),
                 chroma_directory=self.chroma_directory,
                 embedding_model=self.embedding_model,
@@ -58,10 +123,8 @@ class RAGService(Node):
             self.get_logger().error(f'Failed to initialize RAG server: {e}')
             raise
 
-        # Create service callback group for concurrent handling
-        self.group = ReentrantCallbackGroup()
-
-        # Create RetrieveDocuments service
+    def _create_services(self) -> None:
+        """Create ROS2 services for RAG operations."""
         self.retrieve_srv = self.create_service(
             srv_type=RetrieveDocuments,
             srv_name='retrieve_documents',
@@ -69,7 +132,6 @@ class RAGService(Node):
             callback_group=self.group
         )
 
-        # Create StoreDocument service
         self.store_srv = self.create_service(
             srv_type=StoreDocument,
             srv_name='store_document',
@@ -77,7 +139,8 @@ class RAGService(Node):
             callback_group=self.group
         )
 
-        # Create /rosout subscription
+    def _create_subscriptions(self) -> None:
+        """Create ROS2 topic subscriptions."""
         self.rosout_subscription = self.create_subscription(
             Log,
             '/rosout',
@@ -85,172 +148,279 @@ class RAGService(Node):
             1000
         )
 
-        self.get_logger().info('RAG service node has been started.')
-
-    def get_params(self) -> None:
-        """Retrieve and configure ROS2 parameters.
-
-        Declares and retrieves parameters from the ROS2 parameter server
-        for RAG system configuration.
-
-        Returns:
-            None
-        """
-        # Declare and retrieve Chroma directory parameter
-        self.declare_parameter('chroma_directory', './chroma_db')
-        self.chroma_directory = self.get_parameter(
-            'chroma_directory').get_parameter_value().string_value
-        self.get_logger().info(
-            f'The parameter chroma_directory is set to: [{self.chroma_directory}]')
-
-        # Declare and retrieve embedding model parameter
-        self.declare_parameter('embedding_model', 'sentence-transformers/all-MiniLM-L6-v2')
-        self.embedding_model = self.get_parameter(
-            'embedding_model').get_parameter_value().string_value
-        self.get_logger().info(
-            f'The parameter embedding_model is set to: [{self.embedding_model}]')
-
-        # Declare and retrieve top k parameter for document retrieval
-        self.declare_parameter('top_k', 8)
-        self.top_k = self.get_parameter('top_k').get_parameter_value().integer_value
-        self.get_logger().info(f'The parameter top_k is set to: [{self.top_k}]')
-
-        # Declare and retrieve hybrid search parameter
-        self.declare_parameter('use_hybrid_search', True)
-        self.use_hybrid_search = self.get_parameter(
-            'use_hybrid_search').get_parameter_value().bool_value
-        self.get_logger().info(
-            f'The parameter use_hybrid_search is set to: [{self.use_hybrid_search}]')
-
-    def _get_log_level_name(self, level: int) -> str:
-        """Convert ROS2 log level integer to its string representation.
-
-        Parameters:
-            level (int): The log level integer from rcl_interfaces.msg.Log.
-
-        Returns:
-            str: The log level name (DEBUG, INFO, WARN, ERROR, FATAL).
-        """
-        log_levels = {
-            10: 'DEBUG',
-            20: 'INFO',
-            30: 'WARN',
-            40: 'ERROR',
-            50: 'FATAL',
-        }
-        return log_levels.get(level, 'UNKNOWN')
-
-    def retrieve_documents_callback(self, request, response):
+    def retrieve_documents_callback(
+        self,
+        request: RetrieveDocuments.Request,
+        response: RetrieveDocuments.Response,
+    ) -> RetrieveDocuments.Response:
         """Handle RetrieveDocuments service requests.
 
         Processes a query and retrieves relevant documents from the
         vector database using semantic similarity, with optional filtering.
 
-        Parameters:
-            request: The RetrieveDocuments request containing query, k, and filters.
-            response: The RetrieveDocuments response to be populated.
+        Parameters
+        ----------
+        request : RetrieveDocuments.Request
+            The service request containing query, k, and filters.
+        response : RetrieveDocuments.Response
+            The service response to be populated.
 
-        Returns:
+        Returns
+        -------
+        RetrieveDocuments.Response
             The populated response with retrieved documents.
         """
         query = request.query
         k = request.k if request.k > 0 else self.top_k
-        filters = None
+        filters = self._parse_filters(request.filters)
 
-        self.get_logger().debug(f'Retrieve request received for query: "{query}" with k={k}')
-
-        # Parse filters if provided
-        if request.filters:
-            try:
-                filters = json.loads(request.filters)
-                self.get_logger().debug(f'Applied filters: {filters}')
-            except json.JSONDecodeError as e:
-                self.get_logger().warning(f'Invalid filters JSON: {e}')
-                filters = None
+        self.get_logger().debug(
+            f'Retrieve request: query="{query}", k={k}, filters={filters}'
+        )
 
         try:
-            # Retrieve documents from RAG server with filters
-            result_json = self.rag_server.retrieve_documents(query, k=k, filters=filters)
-            result_dict = json.loads(result_json)
-
-            # Populate response with status and results
-            response.status = result_dict['status']
-            response.total_results = result_dict['total_results']
-
-            # Convert results to Document messages
-            response.results = []
-            for doc_data in result_dict['results']:
-                doc = Document()
-                doc.id = doc_data.get('id', 0)
-                doc.content = doc_data.get('content', '')
-
-                # Populate metadata
-                metadata = Metadata()
-                metadata.source = doc_data.get('source', '')
-                metadata.node_name = doc_data.get('node_name', '')
-                metadata.node_function = doc_data.get('node_function', '')
-                metadata.log_level = doc_data.get('log_level', '')
-                doc.metadata = metadata
-
-                response.results.append(doc)
-
-            self.get_logger().info(
-                f'Retrieved {response.total_results} documents for query: "{query}"'
-            )
-
+            result_dict = self._retrieve_and_parse_documents(query, k, filters)
+            self._populate_retrieve_response(response, result_dict, query)
         except ValueError as e:
-            self.get_logger().error(f'Error retrieving documents: {e}')
-            response.status = 'error'
-            response.total_results = 0
-            response.results = []
+            self._handle_retrieve_error(response, e)
 
         return response
 
-    def store_document_callback(self, request, response):
+    def _parse_filters(self, filters_str: str) -> Optional[Dict[str, Any]]:
+        """Parse filters JSON string.
+
+        Parameters
+        ----------
+        filters_str : str
+            JSON string containing filters.
+
+        Returns
+        -------
+        Optional[Dict[str, Any]]
+            Parsed filters dictionary or None if invalid.
+        """
+        if not filters_str:
+            return None
+
+        try:
+            filters = json.loads(filters_str)
+            self.get_logger().debug(f'Applied filters: {filters}')
+            return filters
+        except json.JSONDecodeError as e:
+            self.get_logger().warning(f'Invalid filters JSON: {e}')
+            return None
+
+    def _retrieve_and_parse_documents(
+        self,
+        query: str,
+        k: int,
+        filters: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Retrieve documents and parse the result.
+
+        Parameters
+        ----------
+        query : str
+            Search query.
+        k : int
+            Number of documents to retrieve.
+        filters : Optional[Dict[str, Any]]
+            Metadata filters to apply.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Parsed result dictionary.
+        """
+        result_json = self.rag_server.retrieve_documents(
+            query, k=k, filters=filters
+        )
+        return json.loads(result_json)
+
+    def _populate_retrieve_response(
+        self,
+        response: RetrieveDocuments.Response,
+        result_dict: Dict[str, Any],
+        query: str,
+    ) -> None:
+        """Populate retrieve response with results.
+
+        Parameters
+        ----------
+        response : RetrieveDocuments.Response
+            Response to populate.
+        result_dict : Dict[str, Any]
+            Dictionary containing results.
+        query : str
+            Original query string.
+        """
+        response.status = result_dict['status']
+        response.total_results = result_dict['total_results']
+        response.results = [
+            self._create_document_msg(doc_data)
+            for doc_data in result_dict['results']
+        ]
+
+        self.get_logger().info(
+            f'Retrieved {response.total_results} documents for query: "{query}"'
+        )
+
+    def _create_document_msg(self, doc_data: Dict[str, Any]) -> Document:
+        """Create Document message from document data.
+
+        Parameters
+        ----------
+        doc_data : Dict[str, Any]
+            Document data dictionary.
+
+        Returns
+        -------
+        Document
+            Populated Document message.
+        """
+        doc = Document()
+        doc.id = doc_data.get('id', 0)
+        doc.content = doc_data.get('content', '')
+        doc.metadata = self._create_metadata_msg(doc_data)
+        return doc
+
+    def _create_metadata_msg(self, doc_data: Dict[str, Any]) -> Metadata:
+        """Create Metadata message from document data.
+
+        Parameters
+        ----------
+        doc_data : Dict[str, Any]
+            Document data dictionary.
+
+        Returns
+        -------
+        Metadata
+            Populated Metadata message.
+        """
+        metadata = Metadata()
+        metadata.source = doc_data.get('source', '')
+        metadata.node_name = doc_data.get('node_name', '')
+        metadata.node_function = doc_data.get('node_function', '')
+        metadata.log_level = doc_data.get('log_level', '')
+        return metadata
+
+    def _handle_retrieve_error(
+        self,
+        response: RetrieveDocuments.Response,
+        error: Exception,
+    ) -> None:
+        """Handle retrieval error.
+
+        Parameters
+        ----------
+        response : RetrieveDocuments.Response
+            Response to populate with error information.
+        error : Exception
+            Exception that occurred.
+        """
+        self.get_logger().error(f'Error retrieving documents: {error}')
+        response.status = 'error'
+        response.total_results = 0
+        response.results = []
+
+    def store_document_callback(
+        self,
+        request: StoreDocument.Request,
+        response: StoreDocument.Response,
+    ) -> StoreDocument.Response:
         """Handle StoreDocument service requests.
 
         Stores a new document in the RAG system's vector database
         with metadata information.
 
-        Parameters:
-            request: The StoreDocument request containing a Document message.
-            response: The StoreDocument response to be populated.
+        Parameters
+        ----------
+        request : StoreDocument.Request
+            The service request containing a Document message.
+        response : StoreDocument.Response
+            The service response to be populated.
 
-        Returns:
+        Returns
+        -------
+        StoreDocument.Response
             The populated response with operation result.
         """
         document = request.document
         content = document.content
 
-        self.get_logger().debug(f'Store request received with text length: {len(content)}')
+        self.get_logger().debug(
+            f'Store request received with text length: {len(content)}'
+        )
 
         try:
-            # Extract metadata from the document message
-            metadata = {
-                'source': document.metadata.source,
-                'node_name': document.metadata.node_name,
-                'node_function': document.metadata.node_function,
-                'log_level': document.metadata.log_level,
-            }
-
-            # Store document in RAG server
+            metadata = self._extract_metadata_from_document(document)
             success = self.rag_server.store_document(content, metadata)
-
-            if success:
-                response.success = True
-                response.message = 'Document stored successfully'
-                self.get_logger().info('Document stored successfully')
-            else:
-                response.success = False
-                response.message = 'Failed to store document'
-                self.get_logger().error('Failed to store document')
-
+            self._populate_store_response(response, success)
         except Exception as e:
-            response.success = False
-            response.message = f'Error storing document: {str(e)}'
-            self.get_logger().error(f'Error storing document: {e}')
+            self._handle_store_error(response, e)
 
         return response
+
+    def _extract_metadata_from_document(self, document: Document) -> Dict[str, str]:
+        """Extract metadata from Document message.
+
+        Parameters
+        ----------
+        document : Document
+            Document message containing metadata.
+
+        Returns
+        -------
+        Dict[str, str]
+            Extracted metadata dictionary.
+        """
+        return {
+            'source': document.metadata.source,
+            'node_name': document.metadata.node_name,
+            'node_function': document.metadata.node_function,
+            'log_level': str(document.metadata.log_level),
+        }
+
+    def _populate_store_response(
+        self,
+        response: StoreDocument.Response,
+        success: bool,
+    ) -> None:
+        """Populate store response based on operation result.
+
+        Parameters
+        ----------
+        response : StoreDocument.Response
+            Response to populate.
+        success : bool
+            Whether the store operation succeeded.
+        """
+        if success:
+            response.success = True
+            response.message = 'Document stored successfully'
+            self.get_logger().info('Document stored successfully')
+        else:
+            response.success = False
+            response.message = 'Failed to store document'
+            self.get_logger().error('Failed to store document')
+
+    def _handle_store_error(
+        self,
+        response: StoreDocument.Response,
+        error: Exception,
+    ) -> None:
+        """Handle store operation error.
+
+        Parameters
+        ----------
+        response : StoreDocument.Response
+            Response to populate with error information.
+        error : Exception
+            Exception that occurred.
+        """
+        response.success = False
+        response.message = f'Error storing document: {str(error)}'
+        self.get_logger().error(f'Error storing document: {error}')
 
     def rosout_callback(self, msg: Log) -> None:
         """Handle callbacks for /rosout topic subscription.
@@ -258,61 +428,114 @@ class RAGService(Node):
         This callback processes log messages published to the /rosout topic
         and stores them in the RAG database.
 
-        Parameters:
-            msg: The Log message received from /rosout.
+        Parameters
+        ----------
+        msg : Log
+            The Log message received from /rosout.
         """
-        # Avoiding the node's own logs
+        # Avoid storing the node's own logs
         if msg.name == self.get_logger().name:
             return
 
-        # Format the log message
-        timestamp = f'{msg.stamp.sec}.{msg.stamp.nanosec:09d}'
-        content = f'[{timestamp}]: {msg.msg}'
+        content = self._format_log_content(msg)
+        metadata = self._extract_log_metadata(msg)
 
-        # Extract metadata from the log message
-        metadata = {
+        self._store_log_message(content, metadata, msg.name)
+
+    def _format_log_content(self, msg: Log) -> str:
+        """Format log message content with timestamp.
+
+        Parameters
+        ----------
+        msg : Log
+            Log message.
+
+        Returns
+        -------
+        str
+            Formatted log content.
+        """
+        timestamp = f'{msg.stamp.sec}.{msg.stamp.nanosec:09d}'
+        return f'[{timestamp}]: {msg.msg}'
+
+    def _extract_log_metadata(self, msg: Log) -> Dict[str, str]:
+        """Extract metadata from log message.
+
+        Parameters
+        ----------
+        msg : Log
+            Log message.
+
+        Returns
+        -------
+        Dict[str, str]
+            Extracted metadata dictionary.
+        """
+        return {
             'source': 'rosout_log',
             'node_name': msg.name,
             'node_function': msg.function,
-            'log_level': self._get_log_level_name(msg.level),
+            'log_level': LOG_LEVEL_NAMES.get(msg.level, 'UNKNOWN'),
         }
 
-        # Store the log message in the RAG database
+    def _store_log_message(
+        self,
+        content: str,
+        metadata: Dict[str, str],
+        node_name: str,
+    ) -> None:
+        """Store log message in RAG database.
+
+        Parameters
+        ----------
+        content : str
+            Log message content.
+        metadata : Dict[str, str]
+            Log message metadata.
+        node_name : str
+            Name of the node that generated the log.
+        """
         try:
             success = self.rag_server.store_document(content, metadata)
             if not success:
-                self.get_logger().warning(f'Failed to store log message from {msg.name}')
+                self.get_logger().warning(
+                    f'Failed to store log message from {node_name}'
+                )
         except Exception as e:
             self.get_logger().error(f'Error storing log message: {e}')
 
 
-def main(args=None) -> None:
+def main(args: Optional[Any] = None) -> None:
     """Run the RAG Service node.
 
     Initialize the ROS2 context, create the RAG service node, and spin
     until shutdown is requested. Uses a MultiThreadedExecutor for
     concurrent service handling.
 
-    Parameters:
-        args: Command-line arguments (optional).
-
-    Returns:
-        None
+    Parameters
+    ----------
+    args : Optional[Any]
+        Command-line arguments (default: None).
     """
     rclpy.init(args=args)
+    rag_node = None
 
     try:
-        # Create the RAG service node
         rag_node = RAGService()
-
-        # Use a MultiThreadedExecutor to allow concurrent service handling
         executor = MultiThreadedExecutor()
         executor.add_node(rag_node)
-
-        # Spin the node to process service requests
         executor.spin()
-    except (KeyboardInterrupt, Exception, ExternalShutdownException) as e:
-        print(f'Shutting down RAG service node due to: {e}')
+    except KeyboardInterrupt:
+        print('Shutting down RAG service node (Keyboard Interrupt)')
+    except ExternalShutdownException:
+        print('Shutting down RAG service node (External Shutdown)')
+    except Exception as e:
+        print(f'Shutting down RAG service node due to error: {e}')
+    finally:
+        if rag_node is not None:
+            rag_node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':
