@@ -107,6 +107,10 @@ ROS 2 service node for RAG operations.
 
     Directory where Chroma vector database persistence data will be stored.
 
+* **`embedding_model`** (string, default: "sentence-transformers/all-MiniLM-L6-v2")
+
+    HuggingFace embedding model to use for semantic search.
+
 * **`default_k`** (int, default: 8)
 
     Default number of documents to retrieve per query.
@@ -138,6 +142,9 @@ You can customize the RAG service behavior by passing parameters to the launch f
 
 ```bash
 ros2 launch rag_ros default.launch.py chroma_directory:=/path/to/chroma default_k:=10
+
+# With custom embedding model
+ros2 launch rag_ros default.launch.py embedding_model:='sentence-transformers/all-mpnet-base-v2'
 ```
 
 [Ubuntu]: https://ubuntu.com/

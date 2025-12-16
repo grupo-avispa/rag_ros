@@ -46,6 +46,7 @@ class RAGServer:
         self,
         logger: Optional[Any] = None,
         chroma_directory: str = './chroma_db',
+        embedding_model: str = 'sentence-transformers/all-MiniLM-L6-v2',
         k: int = 8,
     ) -> None:
         """Initialize server and (attempt to) build the vector index.
@@ -56,10 +57,14 @@ class RAGServer:
             Optional ROS2 logger to use for logging (default: None).
         chroma_directory : str
             Directory where Chroma persistence data will be stored.
+        embedding_model : str
+            HuggingFace embedding model name to use (default:
+            sentence-transformers/all-MiniLM-L6-v2).
         k : int
             Number of documents to retrieve by default (default: 8).
         """
         self.chroma_directory = chroma_directory
+        self.embedding_model = embedding_model
         self.k = k
         self.vector_db: Optional[Chroma] = None
         self.retriever: Optional[VectorStoreRetriever] = None
@@ -135,10 +140,11 @@ class RAGServer:
             self.vector_db = Chroma(
                 persist_directory=self.chroma_directory,
                 embedding_function=HuggingFaceEmbeddings(
-                    model_name='sentence-transformers/all-MiniLM-L6-v2',
+                    model_name=self.embedding_model,
                 )
             )
             self._log_info('Vector database loaded successfully')
+            self._log_info(f'Using embedding model: {self.embedding_model}')
 
             # Create retrieval chain
             self.retriever = self.vector_db.as_retriever(

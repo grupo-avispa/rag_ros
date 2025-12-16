@@ -50,6 +50,7 @@ class RAGService(Node):
             self.rag_server = RAGServer(
                 logger=self.get_logger(),
                 chroma_directory=self.chroma_directory,
+                embedding_model=self.embedding_model,
                 k=self.default_k,
             )
         except Exception as e:
@@ -100,6 +101,13 @@ class RAGService(Node):
             'chroma_directory').get_parameter_value().string_value
         self.get_logger().info(
             f'The parameter chroma_directory is set to: [{self.chroma_directory}]')
+
+        # Declare and retrieve embedding model parameter
+        self.declare_parameter('embedding_model', 'sentence-transformers/all-MiniLM-L6-v2')
+        self.embedding_model = self.get_parameter(
+            'embedding_model').get_parameter_value().string_value
+        self.get_logger().info(
+            f'The parameter embedding_model is set to: [{self.embedding_model}]')
 
         # Declare and retrieve default k parameter for document retrieval
         self.declare_parameter('default_k', 8)
