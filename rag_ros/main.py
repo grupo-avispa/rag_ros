@@ -48,7 +48,6 @@ class RAGService(Node):
         try:
             self.rag_server = RAGServer(
                 logger=self.get_logger(),
-                documents_directory=self.documents_directory,
                 chroma_directory=self.chroma_directory,
                 k=self.default_k,
             )
@@ -86,13 +85,6 @@ class RAGService(Node):
         Returns:
             None
         """
-        # Declare and retrieve documents directory parameter
-        self.declare_parameter('documents_directory', './data_files')
-        self.documents_directory = self.get_parameter(
-            'documents_directory').get_parameter_value().string_value
-        self.get_logger().info(
-            f'The parameter documents_directory is set to: [{self.documents_directory}]')
-
         # Declare and retrieve Chroma directory parameter
         self.declare_parameter('chroma_directory', './chroma_db')
         self.chroma_directory = self.get_parameter(

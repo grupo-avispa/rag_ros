@@ -17,9 +17,9 @@
 
 """RAG server.
 
-This module provides a small RAG server that indexes CSV/PDF files from a
-directory into a Chroma vector store using HuggingFace embeddings, and
-exposes a FastMCP tool `rag_query` to retrieve relevant chunks.
+This module provides a RAG server that manages a Chroma vector store using
+HuggingFace embeddings for semantic search, allowing storage and retrieval
+of text documents.
 """
 
 import logging
@@ -28,8 +28,6 @@ import json
 from typing import Dict, List, Optional, Any
 
 from langchain_chroma.vectorstores import Chroma
-from langchain_community.document_loaders import CSVLoader, PyPDFLoader
-from langchain_community.document_loaders.base import BaseLoader
 from langchain_core.documents import Document
 from langchain_core.vectorstores.base import VectorStoreRetriever
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -37,17 +35,16 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 class RAGServer:
-    """Manage indexing and retrieval for local CSV files.
+    """Manage storage and retrieval of text documents in a vector database.
 
-    The server scans `files_path` for CSV files, loads and splits documents,
-    computes embeddings and persists a Chroma vector store. Retrieval uses the
-    vector store's retriever to return relevant chunks for a query.
+    The server uses Chroma for vector storage and HuggingFace embeddings for
+    semantic search. It allows storing documents with metadata and retrieving
+    relevant documents based on similarity to a query.
     """
 
     def __init__(
         self,
         logger: Optional[Any] = None,
-        documents_directory: str = './data_files',
         chroma_directory: str = './chroma_db',
         k: int = 8,
     ) -> None:
@@ -55,8 +52,6 @@ class RAGServer:
 
         Parameters
         ----------
-        documents_directory : str
-            Directory that will be scanned for CSV and PDF files to index.
         logger : Optional[Any]
             Optional ROS2 logger to use for logging (default: None).
         chroma_directory : str
@@ -64,19 +59,11 @@ class RAGServer:
         k : int
             Number of documents to retrieve by default (default: 8).
         """
-        self.documents_directory = documents_directory
         self.chroma_directory = chroma_directory
         self.k = k
         self.vector_db: Optional[Chroma] = None
         self.retriever: Optional[VectorStoreRetriever] = None
         self.logger = logger
-
-        # Create documents directory if it doesn't exist
-        try:
-            os.makedirs(self.documents_directory, exist_ok=True)
-            self._log_info(f'Documents directory ensured at: {self.documents_directory}')
-        except OSError as e:
-            self._log_warning(f'Cannot create documents directory {self.documents_directory}: {e}')
 
         # Create chroma directory if it doesn't exist
         try:
@@ -85,22 +72,6 @@ class RAGServer:
         except OSError as e:
             self._log_warning(
                 f'Cannot create chroma directory {self.chroma_directory}: {e}')
-
-        # Check if documents directory exists and list entries
-        try:
-            entries = os.listdir(self.documents_directory)
-        except OSError as e:
-            self._log_warning(f'Cannot access documents directory {self.documents_directory}: {e}')
-            entries = []
-
-        self.csv_files: List[str] = [
-            os.path.join(self.documents_directory, f)
-            for f in entries if f.endswith('.csv')
-        ]
-        self.pdf_files: List[str] = [
-            os.path.join(self.documents_directory, f)
-            for f in entries if f.endswith('.pdf')
-        ]
 
         # Initialize the RAG system
         self._setup_rag()
@@ -158,10 +129,7 @@ class RAGServer:
             logging.error(msg)
 
     def _setup_rag(self) -> None:
-        """Load documents, build embeddings and initialize the retriever."""
-        docs: List[Document] = []
-        loaders: List[BaseLoader] = []
-
+        """Initialize vector database and retriever."""
         # Load vector store
         try:
             self.vector_db = Chroma(
@@ -177,66 +145,11 @@ class RAGServer:
                 search_type='similarity',
                 search_kwargs={'k': self.k},
             )
-            splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000,
-                chunk_overlap=200,
-            )
             self._log_info('Retriever initialized successfully')
 
         except (ImportError, RuntimeError, ValueError) as e:
             self._log_error(f'Error creating vector database: {e}')
             return
-
-        # Check for documents that are not in the vector store
-        get_db_info = self.vector_db.get()
-        loaded_docs: List[str] = []
-
-        if get_db_info and get_db_info.get('metadatas'):
-            for metadata in get_db_info['metadatas']:
-                if metadata and metadata.get('source') not in loaded_docs:
-                    loaded_docs.append(metadata.get('source'))
-            self._log_info(f'Loaded documents in vector store: {loaded_docs}')
-        else:
-            self._log_info('Vector store is empty, no documents loaded')
-
-        # Load CSV files
-        for file in self.csv_files:
-            if file not in loaded_docs:
-                try:
-                    self._log_debug(f'File [{file}] not in vector store, adding...')
-                    loaders.append(CSVLoader(file_path=file))
-                except (FileNotFoundError, PermissionError, ValueError) as e:
-                    self._log_error(f'Error loading CSV file {file}: {e}')
-                    continue
-
-        # Load PDF files
-        for file in self.pdf_files:
-            if file not in loaded_docs:
-                try:
-                    self._log_debug(f'File [{file}] not in vector store, adding...')
-                    loaders.append(PyPDFLoader(file_path=file))
-                except (FileNotFoundError, PermissionError, ValueError) as e:
-                    self._log_error(f'Error loading PDF file {file}: {e}')
-                    continue
-
-        # Add new documents to the vector store
-        for loader in loaders:
-            try:
-                new_loaded_docs = loader.load()
-                docs.extend(new_loaded_docs)
-            except (FileNotFoundError, PermissionError, ValueError) as e:
-                self._log_error(f'Error loading documents from {loader}: {e}')
-                continue
-
-        # Split documents into chunks
-        if loaders:
-            try:
-                docs_chunked = splitter.split_documents(docs)
-                self._log_info(f'Created new {len(docs_chunked)} document chunks')
-                self.vector_db.add_documents(docs_chunked)
-            except (ValueError, AttributeError) as e:
-                self._log_error(f'Error splitting documents: {e}')
-                return
 
     def retrieve_documents(self, query: str, k: int = 8) -> str:
         """Return top-k document chunks for `query` as a single string.
@@ -266,7 +179,7 @@ class RAGServer:
 
             # Perform the retrieval
             retriever_with_k = self.vector_db.as_retriever(
-                search_kwargs={"k": k}
+                search_kwargs={'k': k}
             )
             docs = retriever_with_k.invoke(query)
 
@@ -318,14 +231,16 @@ class RAGServer:
         """Get statistics about the RAG system.
 
         Returns:
-            dict: System statistics including number of files, documents,
-                and retriever status.
+            dict: System statistics including document count and retriever status.
         """
+        total_documents = 0
+        if self.vector_db is not None:
+            db_info = self.vector_db.get()
+            if db_info and 'ids' in db_info:
+                total_documents = len(db_info['ids'])
+
         return {
-            'csv_files_count': len(self.csv_files),
-            'pdf_files_count': len(self.pdf_files),
-            'total_files': len(self.csv_files) + len(self.pdf_files),
-            'documents_directory': self.documents_directory,
+            'total_documents': total_documents,
             'chroma_directory': self.chroma_directory,
             'retriever_initialized': self.retriever is not None,
             'vector_db_initialized': self.vector_db is not None,
