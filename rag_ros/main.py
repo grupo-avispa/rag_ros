@@ -18,7 +18,7 @@
 import json
 from rag_ros.rag_server import RAGServer
 from llm_interactions_msgs.srv import RetrieveDocuments, StoreDocument
-from llm_interactions_msgs.msg import Document
+from llm_interactions_msgs.msg import Document, Metadata
 
 import rclpy
 from rclpy.node import Node
@@ -130,18 +130,24 @@ class RAGService(Node):
             result_json = self.rag_server.retrieve_documents(query, k=k)
             result_dict = json.loads(result_json)
 
-            # Populate response with status and metadata
+            # Populate response with status and results
             response.status = result_dict['status']
-            response.message = result_dict['message']
             response.total_results = result_dict['total_results']
 
             # Convert results to Document messages
             response.results = []
             for doc_data in result_dict['results']:
                 doc = Document()
-                doc.doc_id = doc_data['doc_id']
-                doc.source = doc_data['source']
-                doc.content = doc_data['content']
+                doc.id = doc_data.get('id', 0)
+                doc.content = doc_data.get('content', '')
+
+                # Populate metadata
+                metadata = Metadata()
+                metadata.source = doc_data.get('source', '')
+                metadata.node_name = doc_data.get('node_name', '')
+                metadata.node_function = doc_data.get('node_function', '')
+                doc.metadata = metadata
+
                 response.results.append(doc)
 
             self.get_logger().info(
@@ -151,7 +157,6 @@ class RAGService(Node):
         except ValueError as e:
             self.get_logger().error(f'Error retrieving documents: {e}')
             response.status = 'error'
-            response.message = str(e)
             response.total_results = 0
             response.results = []
 
@@ -160,32 +165,31 @@ class RAGService(Node):
     def store_document_callback(self, request, response):
         """Handle StoreDocument service requests.
 
-        Stores a new text document in the RAG system's vector database
-        with optional metadata.
+        Stores a new document in the RAG system's vector database
+        with metadata information.
 
         Parameters:
-            request: The StoreDocument request containing text and metadata.
+            request: The StoreDocument request containing a Document message.
             response: The StoreDocument response to be populated.
 
         Returns:
             The populated response with operation result.
         """
-        text = request.text
-        metadata_json = request.metadata_json
+        document = request.document
+        content = document.content
 
-        self.get_logger().debug(f'Store request received with text length: {len(text)}')
+        self.get_logger().debug(f'Store request received with text length: {len(content)}')
 
         try:
-            # Parse metadata if provided
-            metadata = None
-            if metadata_json:
-                try:
-                    metadata = json.loads(metadata_json)
-                except json.JSONDecodeError as e:
-                    self.get_logger().warning(f'Invalid metadata JSON: {e}')
+            # Extract metadata from the document message
+            metadata = {
+                'source': document.metadata.source,
+                'node_name': document.metadata.node_name,
+                'node_function': document.metadata.node_function,
+            }
 
             # Store document in RAG server
-            success = self.rag_server.store_document(text, metadata)
+            success = self.rag_server.store_document(content, metadata)
 
             if success:
                 response.success = True

@@ -37,8 +37,9 @@ if venv_path:
 
 def generate_launch_description():
     """Generate launch description for RAG Service node."""
-    # Get the virtual environment
-    venv_python = os.path.join(os.environ['VIRTUAL_ENV'], 'bin', 'python')
+    # Get the virtual environment (use 'python3' if not available)
+    venv_path = os.environ.get('VIRTUAL_ENV')
+    venv_python = os.path.join(venv_path, 'bin', 'python') if venv_path else 'python3'
     # Get the launch directory
     rag_dir = get_package_share_directory('rag_ros')
 
