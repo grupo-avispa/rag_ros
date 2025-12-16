@@ -51,7 +51,8 @@ class RAGService(Node):
                 logger=self.get_logger(),
                 chroma_directory=self.chroma_directory,
                 embedding_model=self.embedding_model,
-                k=self.default_k,
+                top_k=self.top_k,
+                use_hybrid_search=self.use_hybrid_search,
             )
         except Exception as e:
             self.get_logger().error(f'Failed to initialize RAG server: {e}')
@@ -109,12 +110,17 @@ class RAGService(Node):
         self.get_logger().info(
             f'The parameter embedding_model is set to: [{self.embedding_model}]')
 
-        # Declare and retrieve default k parameter for document retrieval
-        self.declare_parameter('default_k', 8)
-        self.default_k = self.get_parameter(
-            'default_k').get_parameter_value().integer_value
+        # Declare and retrieve top k parameter for document retrieval
+        self.declare_parameter('top_k', 8)
+        self.top_k = self.get_parameter('top_k').get_parameter_value().integer_value
+        self.get_logger().info(f'The parameter top_k is set to: [{self.top_k}]')
+
+        # Declare and retrieve hybrid search parameter
+        self.declare_parameter('use_hybrid_search', True)
+        self.use_hybrid_search = self.get_parameter(
+            'use_hybrid_search').get_parameter_value().bool_value
         self.get_logger().info(
-            f'The parameter default_k is set to: [{self.default_k}]')
+            f'The parameter use_hybrid_search is set to: [{self.use_hybrid_search}]')
 
     def _get_log_level_name(self, level: int) -> str:
         """Convert ROS2 log level integer to its string representation.
@@ -148,7 +154,7 @@ class RAGService(Node):
             The populated response with retrieved documents.
         """
         query = request.query
-        k = request.k if request.k > 0 else self.default_k
+        k = request.k if request.k > 0 else self.top_k
         filters = None
 
         self.get_logger().debug(f'Retrieve request received for query: "{query}" with k={k}')

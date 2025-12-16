@@ -28,6 +28,7 @@ import json
 from typing import Dict, List, Optional, Any
 
 from langchain_chroma.vectorstores import Chroma
+from langchain_community.retrievers import BM25Retriever, EnsembleRetriever
 from langchain_core.documents import Document
 from langchain_core.vectorstores.base import VectorStoreRetriever
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -47,7 +48,8 @@ class RAGServer:
         logger: Optional[Any] = None,
         chroma_directory: str = './chroma_db',
         embedding_model: str = 'sentence-transformers/all-MiniLM-L6-v2',
-        k: int = 8,
+        top_k: int = 8,
+        use_hybrid_search: bool = True,
     ) -> None:
         """Initialize server and (attempt to) build the vector index.
 
@@ -60,14 +62,19 @@ class RAGServer:
         embedding_model : str
             HuggingFace embedding model name to use (default:
             sentence-transformers/all-MiniLM-L6-v2).
-        k : int
+        top_k : int
             Number of documents to retrieve by default (default: 8).
+        use_hybrid_search : bool
+            Whether to use hybrid search (BM25 + semantic) (default: True).
         """
         self.chroma_directory = chroma_directory
         self.embedding_model = embedding_model
-        self.k = k
+        self.top_k = top_k
+        self.use_hybrid_search = use_hybrid_search
         self.vector_db: Optional[Chroma] = None
-        self.retriever: Optional[VectorStoreRetriever] = None
+        self.vector_retriever: Optional[VectorStoreRetriever] = None
+        self.bm25_retriever: Optional[BM25Retriever] = None
+        self.ensemble_retriever: Optional[EnsembleRetriever] = None
         self.logger = logger
 
         # Create chroma directory if it doesn't exist
@@ -147,15 +154,62 @@ class RAGServer:
             self._log_info(f'Using embedding model: {self.embedding_model}')
 
             # Create retrieval chain
-            self.retriever = self.vector_db.as_retriever(
+            self.vector_retriever = self.vector_db.as_retriever(
                 search_type='similarity',
-                search_kwargs={'k': self.k},
+                search_kwargs={'k': self.top_k},
             )
             self._log_info('Retriever initialized successfully')
+
+            # Initialize BM25 retriever if hybrid search is enabled
+            if self.use_hybrid_search:
+                self._setup_bm25_retriever()
 
         except (ImportError, RuntimeError, ValueError) as e:
             self._log_error(f'Error creating vector database: {e}')
             return
+
+    def _setup_bm25_retriever(self) -> None:
+        """Initialize BM25 and ensemble retrievers for hybrid search.
+
+        Creates a BM25 retriever from documents in the vector database and combines
+        it with the semantic retriever using EnsembleRetriever.
+        """
+        if self.vector_db is None:
+            self._log_warning('Cannot setup BM25 retriever: vector_db not initialized')
+            return
+
+        try:
+            # Get all documents from the vector database
+            db_info = self.vector_db.get()
+            if not db_info or 'documents' not in db_info or not db_info['documents']:
+                self._log_warning('No documents found in vector database for BM25')
+                return
+
+            # Create Document objects from the stored data
+            docs: List[Document] = []
+            for i, doc_text in enumerate(db_info['documents']):
+                metadata: dict[str, Any] = {}
+                if 'metadatas' in db_info and i < len(db_info['metadatas']):
+                    metadata = db_info['metadatas'][i] or {}
+                docs.append(Document(page_content=doc_text, metadata=metadata))
+
+            # Create BM25 retriever
+            self.bm25_retriever = BM25Retriever.from_documents(docs)
+            self._log_info(f'BM25 retriever initialized with {len(docs)} documents')
+
+            # Create ensemble retriever combining semantic and BM25 search
+            if self.vector_retriever is not None:
+                self.ensemble_retriever = EnsembleRetriever(
+                    retrievers=[self.vector_retriever, self.bm25_retriever],
+                    weights=[0.5, 0.5],  # Equal weight for both retrievers
+                )
+                self._log_info(
+                    'Ensemble retriever created (50% semantic + 50% BM25)')
+
+        except (ValueError, AttributeError, RuntimeError) as e:
+            self._log_warning(f'Error setting up BM25/ensemble retriever: {e}')
+            self.bm25_retriever = None
+            self.ensemble_retriever = None
 
     def _build_where_filter(self, filters: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Build a Chroma where filter from metadata filter dictionary.
@@ -192,6 +246,72 @@ class RAGServer:
         else:
             return {'$and': where_conditions}
 
+    def _filter_documents_by_metadata(
+        self,
+        documents: List[Document],
+        filters: Dict[str, Any],
+    ) -> List[Document]:
+        """Filter documents by metadata criteria.
+
+        Parameters:
+            documents (List[Document]): Documents to filter.
+            filters (Dict[str, Any]): Filter criteria.
+                Supported keys: 'source', 'node_name', 'node_function', 'log_level'.
+
+        Returns:
+            List[Document]: Filtered documents matching all criteria.
+        """
+        supported_keys = ['source', 'node_name', 'node_function', 'log_level']
+        filtered_docs = documents
+
+        for key, value in filters.items():
+            if key not in supported_keys:
+                self._log_warning(f'Unsupported filter key: {key}')
+                continue
+
+            # Apply filter for this key
+            if isinstance(value, list):
+                # If value is a list, keep documents where metadata[key] is in list
+                filtered_docs = [
+                    doc for doc in filtered_docs
+                    if self._doc_matches_filter(doc, key, value, is_list=True)
+                ]
+            else:
+                # Single value: keep documents where metadata[key] equals value
+                filtered_docs = [
+                    doc for doc in filtered_docs
+                    if self._doc_matches_filter(doc, key, value, is_list=False)
+                ]
+
+        return filtered_docs
+
+    def _doc_matches_filter(
+        self,
+        doc: Document,
+        key: str,
+        value: Any,
+        is_list: bool = False,
+    ) -> bool:
+        """Check if a document matches a filter criterion.
+
+        Parameters:
+            doc (Document): Document to check.
+            key (str): Metadata key to filter by.
+            value (Any): Value(s) to match.
+            is_list (bool): Whether value is a list for OR matching.
+
+        Returns:
+            bool: True if document matches the filter criterion.
+        """
+        if not hasattr(doc, 'metadata') or not doc.metadata:
+            return False
+
+        doc_value = doc.metadata.get(key)
+        if is_list:
+            return doc_value in value
+        else:
+            return doc_value == value
+
     def retrieve_documents(
         self,
         query: str,
@@ -199,6 +319,9 @@ class RAGServer:
         filters: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Return top-k document chunks for `query` as a single string.
+
+        Uses hybrid search combining semantic similarity and keyword matching (BM25)
+        via EnsembleRetriever when enabled, providing more comprehensive results.
 
         Parameters:
             query (str): The query string to search for.
@@ -216,10 +339,8 @@ class RAGServer:
         """
         self._log_info(f'Starting document retrieval for query: "{query}"')
         self._log_debug(f'Requested {k} documents')
-        if filters:
-            self._log_debug(f'Applied filters: {filters}')
 
-        if self.retriever is None or self.vector_db is None:
+        if self.vector_retriever is None or self.vector_db is None:
             error_msg = 'Retriever or vector database not initialized.'
             self._log_error(error_msg)
             raise ValueError(error_msg)
@@ -227,18 +348,35 @@ class RAGServer:
         try:
             self._log_info('Searching vector database...')
 
-            # Perform the retrieval with optional filtering
-            search_kwargs = {'k': k}
-            if filters:
-                where_filter = self._build_where_filter(filters)
-                if where_filter:
-                    search_kwargs['where'] = where_filter  # type: ignore[assignment]
-                    self._log_debug(f'Search kwargs: {search_kwargs}')
+            # Use ensemble retriever if available, otherwise use semantic search only
+            if self.use_hybrid_search and self.ensemble_retriever is not None:
+                self._log_debug('Using ensemble search (semantic + BM25)')
+                docs = self.ensemble_retriever.invoke(query)
+                # Limit results to k documents
+                docs = docs[:k]
+                # Apply metadata filtering to ensemble results if filters provided
+                if filters is not None:
+                    self._log_debug(f'Applying metadata filters: {filters}')
+                    docs = self._filter_documents_by_metadata(docs, filters)
+                    # Ensure we have at least k documents after filtering
+                    if len(docs) < k and len(docs) > 0:
+                        self._log_debug(
+                            f'Filtering reduced results from {len(docs)} to {len(docs)}')
+            else:
+                self._log_debug('Using semantic search only')
+                # Perform semantic search with optional filtering
+                search_kwargs = {'k': k}
+                if filters:
+                    self._log_debug(f'Applying metadata filters: {filters}')
+                    where_filter = self._build_where_filter(filters)
+                    if where_filter:
+                        search_kwargs['where'] = where_filter  # type: ignore[assignment]
+                        self._log_debug(f'Search kwargs: {search_kwargs}')
 
-            retriever_with_k = self.vector_db.as_retriever(
-                search_kwargs=search_kwargs
-            )
-            docs = retriever_with_k.invoke(query)
+                retriever_with_k = self.vector_db.as_retriever(
+                    search_kwargs=search_kwargs
+                )
+                docs = retriever_with_k.invoke(query)
 
             # Generate a formatted text response from the retrieved documents
             results: List[Dict[str, Any]] = []
@@ -307,7 +445,7 @@ class RAGServer:
         return {
             'total_documents': total_documents,
             'chroma_directory': self.chroma_directory,
-            'retriever_initialized': self.retriever is not None,
+            'retriever_initialized': self.vector_retriever is not None,
             'vector_db_initialized': self.vector_db is not None,
         }
 
@@ -356,6 +494,11 @@ class RAGServer:
 
             self._log_info(
                 f'Stored document with {len(docs_chunked)} chunks and metadata: {doc_metadata}')
+
+            # Update BM25 retriever if hybrid search is enabled
+            if self.use_hybrid_search:
+                self._setup_bm25_retriever()
+
             return True
 
         except (ValueError, AttributeError) as e:

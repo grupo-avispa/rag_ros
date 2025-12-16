@@ -46,7 +46,8 @@ def generate_launch_description():
     # Create the launch configuration variables
     documents_directory = LaunchConfiguration('documents_directory')
     chroma_directory = LaunchConfiguration('chroma_directory')
-    default_k = LaunchConfiguration('default_k')
+    top_k = LaunchConfiguration('top_k')
+    use_hybrid_search = LaunchConfiguration('use_hybrid_search')
 
     # Declare launch arguments
     declare_documents_directory_cmd = DeclareLaunchArgument(
@@ -59,10 +60,15 @@ def generate_launch_description():
         default_value=os.path.join(rag_dir, 'chroma_db'),
         description='Directory where Chroma vector database persistence data will be stored')
 
-    declare_default_k_cmd = DeclareLaunchArgument(
-        'default_k',
+    declare_top_k_cmd = DeclareLaunchArgument(
+        'top_k',
         default_value='8',
         description='Default number of documents to retrieve')
+
+    declare_use_hybrid_search_cmd = DeclareLaunchArgument(
+        'use_hybrid_search',
+        default_value='true',
+        description='Enable hybrid search combining semantic + BM25 retrievers')
 
     # RAG Service node
     rag_node_cmd = Node(
@@ -74,7 +80,8 @@ def generate_launch_description():
         parameters=[{
             'documents_directory': documents_directory,
             'chroma_directory': chroma_directory,
-            'default_k': default_k,
+            'top_k': top_k,
+            'use_hybrid_search': use_hybrid_search,
         }])
 
     # Create the launch description and populate
@@ -82,7 +89,8 @@ def generate_launch_description():
 
     ld.add_action(declare_documents_directory_cmd)
     ld.add_action(declare_chroma_directory_cmd)
-    ld.add_action(declare_default_k_cmd)
+    ld.add_action(declare_top_k_cmd)
+    ld.add_action(declare_use_hybrid_search_cmd)
     ld.add_action(rag_node_cmd)
 
     return ld

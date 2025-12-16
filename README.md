@@ -10,11 +10,13 @@ ROS 2 wrapper for Retrieval-Augmented Generation (RAG) systems, providing integr
 This package provides a ROS 2 service node for RAG (Retrieval-Augmented Generation) operations. It uses a Chroma vector store with HuggingFace embeddings for semantic search and document retrieval. The node exposes services for storing and retrieving documents, and automatically captures ROS 2 log messages from the /rosout topic for storage in the database.
 
 **Features:**
+- **Hybrid Search**: Combines semantic search (vector similarity) with BM25 keyword search via EnsembleRetriever
 - Semantic search using Chroma vector store and HuggingFace embeddings
 - ROS 2 service interface for document retrieval and storage
-- Log message storage from /rosout topic
+- Log message storage from /rosout topic with automatic metadata extraction
 - Flexible configuration via ROS 2 parameters
-- Support for metadata-rich document storage
+- Support for metadata-rich document storage and filtering
+- Configurable embedding models and search strategies
 
 **Keywords:** ROS2, RAG, LangChain, Vector Store, Semantic Search
 
@@ -111,9 +113,13 @@ ROS 2 service node for RAG operations.
 
     HuggingFace embedding model to use for semantic search.
 
-* **`default_k`** (int, default: 8)
+* **`top_k`** (int, default: 8)
 
     Default number of documents to retrieve per query.
+
+* **`use_hybrid_search`** (bool, default: true)
+
+    Enable hybrid search combining semantic search (vector similarity) with BM25 keyword-based search. When enabled, uses EnsembleRetriever with equal weights (50% semantic + 50% BM25) for more comprehensive document retrieval.
 
 ## Example Usage
 
@@ -141,10 +147,21 @@ ros2 service call /store_document llm_interactions_msgs/srv/StoreDocument "{docu
 You can customize the RAG service behavior by passing parameters to the launch file:
 
 ```bash
-ros2 launch rag_ros default.launch.py chroma_directory:=/path/to/chroma default_k:=10
+# Basic configuration with custom k and directory
+ros2 launch rag_ros default.launch.py chroma_directory:=/path/to/chroma top_k:=10
 
 # With custom embedding model
 ros2 launch rag_ros default.launch.py embedding_model:='sentence-transformers/all-mpnet-base-v2'
+
+# Enable/disable hybrid search
+ros2 launch rag_ros default.launch.py use_hybrid_search:=true
+
+# Full configuration example
+ros2 launch rag_ros default.launch.py \
+  chroma_directory:=/path/to/chroma \
+  embedding_model:='sentence-transformers/all-MiniLM-L6-v2' \
+  top_k:=5 \
+  use_hybrid_search:=true
 ```
 
 [Ubuntu]: https://ubuntu.com/
