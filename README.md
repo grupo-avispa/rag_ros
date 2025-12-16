@@ -64,11 +64,12 @@ ROS 2 service node for RAG operations.
 
 * **`retrieve_documents`** ([llm_interactions_msgs/srv/RetrieveDocuments])
 
-    Retrieve relevant documents from the vector database based on a query.
+    Retrieve relevant documents from the vector database based on a query with optional filtering.
 
     **Request:**
     - `query` (string): The input query to retrieve relevant documents
     - `k` (int32): Number of documents to retrieve (default: 8)
+    - `filters` (string): Optional metadata filters as JSON string. Supported filter keys: `source`, `node_name`, `node_function`, `log_level`
 
     **Response:**
     - `status` (string): Response status
@@ -115,7 +116,14 @@ ROS 2 service node for RAG operations.
 ### Retrieve Documents
 
 ```bash
+# Basic retrieval
 ros2 service call /retrieve_documents llm_interactions_msgs/srv/RetrieveDocuments "{query: 'machine learning', k: 5}"
+
+# Retrieval with log level filter
+ros2 service call /retrieve_documents llm_interactions_msgs/srv/RetrieveDocuments "{query: 'error', k: 5, filters: '{\"log_level\": \"ERROR\"}'}"
+
+# Retrieval with multiple filters
+ros2 service call /retrieve_documents llm_interactions_msgs/srv/RetrieveDocuments "{query: 'database', k: 5, filters: '{\"log_level\": \"ERROR\", \"node_name\": \"my_node\"}'}"
 ```
 
 ### Store Document

@@ -151,12 +151,54 @@ class RAGServer:
             self._log_error(f'Error creating vector database: {e}')
             return
 
-    def retrieve_documents(self, query: str, k: int = 8) -> str:
+    def _build_where_filter(self, filters: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Build a Chroma where filter from metadata filter dictionary.
+
+        Parameters:
+            filters (Dict[str, Any]): Dictionary with filter criteria.
+                Supported keys: 'source', 'node_name', 'node_function', 'log_level'.
+
+        Returns:
+            Optional[Dict[str, Any]]: A where filter dictionary for Chroma, or None.
+        """
+        where_conditions = []
+        supported_keys = ['source', 'node_name', 'node_function', 'log_level']
+
+        for key, value in filters.items():
+            if key not in supported_keys:
+                self._log_warning(f'Unsupported filter key: {key}')
+                continue
+
+            if isinstance(value, list):
+                # If value is a list, create an OR condition
+                or_conditions = [{'$eq': [f'${key}', v]} for v in value]
+                where_conditions.append({'$or': or_conditions})
+            else:
+                # Single value equality check
+                where_conditions.append({key: {'$eq': value}})  # type: ignore[dict-item]
+
+        if not where_conditions:
+            return None
+
+        # If only one condition, return it directly; otherwise use $and
+        if len(where_conditions) == 1:
+            return where_conditions[0]
+        else:
+            return {'$and': where_conditions}
+
+    def retrieve_documents(
+        self,
+        query: str,
+        k: int = 8,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """Return top-k document chunks for `query` as a single string.
 
         Parameters:
             query (str): The query string to search for.
             k (int): The number of top documents to return.
+            filters (Optional[Dict[str, Any]]): Optional metadata filters to apply.
+                Supported filters: 'source', 'node_name', 'node_function', 'log_level'.
 
         Returns:
             str: A formatted string containing the retrieved document chunks.
@@ -168,6 +210,8 @@ class RAGServer:
         """
         self._log_info(f'Starting document retrieval for query: "{query}"')
         self._log_debug(f'Requested {k} documents')
+        if filters:
+            self._log_debug(f'Applied filters: {filters}')
 
         if self.retriever is None or self.vector_db is None:
             error_msg = 'Retriever or vector database not initialized.'
@@ -177,9 +221,16 @@ class RAGServer:
         try:
             self._log_info('Searching vector database...')
 
-            # Perform the retrieval
+            # Perform the retrieval with optional filtering
+            search_kwargs = {'k': k}
+            if filters:
+                where_filter = self._build_where_filter(filters)
+                if where_filter:
+                    search_kwargs['where'] = where_filter  # type: ignore[assignment]
+                    self._log_debug(f'Search kwargs: {search_kwargs}')
+
             retriever_with_k = self.vector_db.as_retriever(
-                search_kwargs={'k': k}
+                search_kwargs=search_kwargs
             )
             docs = retriever_with_k.invoke(query)
 
@@ -188,12 +239,22 @@ class RAGServer:
             for i, doc in enumerate(docs):
                 # Include source metadata if available
                 source = 'Unknown source'
+                node_name = 'Unknown node'
+                node_function = 'Unknown function'
+                log_level = 'UNKNOWN'
+
                 if hasattr(doc, 'metadata') and doc.metadata:
                     source = doc.metadata.get('source', 'Unknown source')
+                    node_name = doc.metadata.get('node_name', 'Unknown node')
+                    node_function = doc.metadata.get('node_function', 'Unknown function')
+                    log_level = doc.metadata.get('log_level', 'UNKNOWN')
 
                 formatted_doc = {
-                    'doc_id': i + 1,
+                    'id': i + 1,
                     'source': source,
+                    'node_name': node_name,
+                    'node_function': node_function,
+                    'log_level': log_level,
                     'content': doc.page_content
                 }
 
@@ -201,7 +262,6 @@ class RAGServer:
 
             response = {
                 'status': 'success',
-                'message': 'Documents retrieved successfully',
                 'query': query,
                 'total_results': len(results),
                 'results': results
@@ -220,7 +280,6 @@ class RAGServer:
             self._log_error(error_msg)
             empty_response = {
                 'status': 'success',
-                'message': 'No relevant documents found for your question.',
                 'query': query,
                 'total_results': 0,
                 'results': []

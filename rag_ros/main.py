@@ -130,10 +130,10 @@ class RAGService(Node):
         """Handle RetrieveDocuments service requests.
 
         Processes a query and retrieves relevant documents from the
-        vector database using semantic similarity.
+        vector database using semantic similarity, with optional filtering.
 
         Parameters:
-            request: The RetrieveDocuments request containing query and k.
+            request: The RetrieveDocuments request containing query, k, and filters.
             response: The RetrieveDocuments response to be populated.
 
         Returns:
@@ -141,12 +141,22 @@ class RAGService(Node):
         """
         query = request.query
         k = request.k if request.k > 0 else self.default_k
+        filters = None
 
         self.get_logger().debug(f'Retrieve request received for query: "{query}" with k={k}')
 
+        # Parse filters if provided
+        if request.filters:
+            try:
+                filters = json.loads(request.filters)
+                self.get_logger().debug(f'Applied filters: {filters}')
+            except json.JSONDecodeError as e:
+                self.get_logger().warning(f'Invalid filters JSON: {e}')
+                filters = None
+
         try:
-            # Retrieve documents from RAG server
-            result_json = self.rag_server.retrieve_documents(query, k=k)
+            # Retrieve documents from RAG server with filters
+            result_json = self.rag_server.retrieve_documents(query, k=k, filters=filters)
             result_dict = json.loads(result_json)
 
             # Populate response with status and results
@@ -165,6 +175,7 @@ class RAGService(Node):
                 metadata.source = doc_data.get('source', '')
                 metadata.node_name = doc_data.get('node_name', '')
                 metadata.node_function = doc_data.get('node_function', '')
+                metadata.log_level = doc_data.get('log_level', '')
                 doc.metadata = metadata
 
                 response.results.append(doc)
