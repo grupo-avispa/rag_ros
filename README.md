@@ -7,14 +7,14 @@ ROS 2 wrapper for Retrieval-Augmented Generation (RAG) systems, providing integr
 
 ## Overview
 
-This package provides a ROS 2 service node for RAG (Retrieval-Augmented Generation) operations. It indexes CSV and PDF documents into a Chroma vector store using HuggingFace embeddings and exposes services for semantic search and document storage.
+This package provides a ROS 2 service node for RAG (Retrieval-Augmented Generation) operations. It uses a Chroma vector store with HuggingFace embeddings for semantic search and document retrieval. The node exposes services for storing and retrieving documents, and automatically captures ROS 2 log messages from the /rosout topic for storage in the database.
 
 **Features:**
-- Document indexing from CSV and PDF files
 - Semantic search using Chroma vector store and HuggingFace embeddings
 - ROS 2 service interface for document retrieval and storage
-- Automatic directory creation and initialization
+- Log message storage from /rosout topic
 - Flexible configuration via ROS 2 parameters
+- Support for metadata-rich document storage
 
 **Keywords:** ROS2, RAG, LangChain, Vector Store, Semantic Search
 
@@ -72,27 +72,35 @@ ROS 2 service node for RAG operations.
 
     **Response:**
     - `status` (string): Response status
-    - `message` (string): Status message
     - `total_results` (int32): Total number of documents retrieved
-    - `results` (Document[]): Array of retrieved documents from ChromaDB
+    - `results` (Document[]): Array of retrieved documents with the following structure:
+        - `id` (int32): Unique identifier for the document
+        - `content` (string): Text content of the document
+        - `metadata` (Metadata): Metadata associated with the document
+            - `source` (string): Source or origin of the document
+            - `node_name` (string): Name of the node that processed the document
+            - `node_function` (string): Function of the node that processed the document
+            - `log_level` (string): Log level of the message (DEBUG, INFO, WARN, ERROR, FATAL)
 
 * **`store_document`** ([llm_interactions_msgs/srv/StoreDocument])
 
     Store a new document in the vector database.
 
     **Request:**
-    - `text` (string): Document content to store
-    - `metadata_json` (string): Optional metadata in JSON format
+    - `document` (Document): Document to store with the following structure:
+        - `id` (int32): Unique identifier for the document
+        - `content` (string): Text content to store
+        - `metadata` (Metadata): Metadata associated with the document
+            - `source` (string): Source or origin of the document
+            - `node_name` (string): Name of the node processing the document
+            - `node_function` (string): Function of the node processing the document
+            - `log_level` (string): Log level of the message (DEBUG, INFO, WARN, ERROR, FATAL)
 
     **Response:**
     - `success` (bool): Operation success status
     - `message` (string): Status message
 
 #### Parameters
-
-* **`documents_directory`** (string, default: "./data_files")
-
-    Directory containing CSV and PDF files to index.
 
 * **`chroma_directory`** (string, default: "./chroma_db")
 
@@ -113,7 +121,7 @@ ros2 service call /retrieve_documents llm_interactions_msgs/srv/RetrieveDocument
 ### Store Document
 
 ```bash
-ros2 service call /store_document llm_interactions_msgs/srv/StoreDocument "{text: 'Machine learning is a subset of artificial intelligence', metadata_json: '{\"source\": \"example.txt\"}'}"
+ros2 service call /store_document llm_interactions_msgs/srv/StoreDocument "{document: {id: 1, content: 'Machine learning is a subset of artificial intelligence', metadata: {source: 'example.txt', node_name: 'example_node', node_function: 'process', log_level: 'INFO'}}}"
 ```
 
 ## Configuration
@@ -121,7 +129,7 @@ ros2 service call /store_document llm_interactions_msgs/srv/StoreDocument "{text
 You can customize the RAG service behavior by passing parameters to the launch file:
 
 ```bash
-ros2 launch rag_ros default.launch.py documents_directory:=/path/to/documents chroma_directory:=/path/to/chroma default_k:=10
+ros2 launch rag_ros default.launch.py chroma_directory:=/path/to/chroma default_k:=10
 ```
 
 [Ubuntu]: https://ubuntu.com/
