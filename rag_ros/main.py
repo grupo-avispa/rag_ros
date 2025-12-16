@@ -24,6 +24,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup
+from rcl_interfaces.msg import Log
 
 
 class RAGService(Node):
@@ -74,6 +75,14 @@ class RAGService(Node):
             callback_group=self.group
         )
 
+        # Create /rosout subscription
+        self.rosout_subscription = self.create_subscription(
+            Log,
+            '/rosout',
+            self.rosout_callback,
+            1000
+        )
+
         self.get_logger().info('RAG service node has been started.')
 
     def get_params(self) -> None:
@@ -98,6 +107,24 @@ class RAGService(Node):
             'default_k').get_parameter_value().integer_value
         self.get_logger().info(
             f'The parameter default_k is set to: [{self.default_k}]')
+
+    def _get_log_level_name(self, level: int) -> str:
+        """Convert ROS2 log level integer to its string representation.
+
+        Parameters:
+            level (int): The log level integer from rcl_interfaces.msg.Log.
+
+        Returns:
+            str: The log level name (DEBUG, INFO, WARN, ERROR, FATAL).
+        """
+        log_levels = {
+            10: 'DEBUG',
+            20: 'INFO',
+            30: 'WARN',
+            40: 'ERROR',
+            50: 'FATAL',
+        }
+        return log_levels.get(level, 'UNKNOWN')
 
     def retrieve_documents_callback(self, request, response):
         """Handle RetrieveDocuments service requests.
@@ -178,6 +205,7 @@ class RAGService(Node):
                 'source': document.metadata.source,
                 'node_name': document.metadata.node_name,
                 'node_function': document.metadata.node_function,
+                'log_level': document.metadata.log_level,
             }
 
             # Store document in RAG server
@@ -198,6 +226,39 @@ class RAGService(Node):
             self.get_logger().error(f'Error storing document: {e}')
 
         return response
+
+    def rosout_callback(self, msg: Log) -> None:
+        """Handle callbacks for /rosout topic subscription.
+
+        This callback processes log messages published to the /rosout topic
+        and stores them in the RAG database.
+
+        Parameters:
+            msg: The Log message received from /rosout.
+        """
+        # Avoiding the node's own logs
+        if msg.name == self.get_logger().name:
+            return
+
+        # Format the log message
+        timestamp = f'{msg.stamp.sec}.{msg.stamp.nanosec:09d}'
+        content = f'[{timestamp}]: {msg.msg}'
+
+        # Extract metadata from the log message
+        metadata = {
+            'source': 'rosout_log',
+            'node_name': msg.name,
+            'node_function': msg.function,
+            'log_level': self._get_log_level_name(msg.level),
+        }
+
+        # Store the log message in the RAG database
+        try:
+            success = self.rag_server.store_document(content, metadata)
+            if not success:
+                self.get_logger().warning(f'Failed to store log message from {msg.name}')
+        except Exception as e:
+            self.get_logger().error(f'Error storing log message: {e}')
 
 
 def main(args=None) -> None:
