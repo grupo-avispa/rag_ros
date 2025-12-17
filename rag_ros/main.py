@@ -25,7 +25,10 @@ from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 
 from llm_interactions_msgs.msg import Document, Metadata
-from llm_interactions_msgs.srv import RetrieveDocuments, StoreDocument
+from llm_interactions_msgs.srv import (
+    RetrieveDocuments, RetrieveDocuments_Request, RetrieveDocuments_Response,
+    StoreDocument, StoreDocument_Request, StoreDocument_Response
+)
 from rag_ros.rag_server import RAGServer
 
 # Log level mapping
@@ -150,9 +153,9 @@ class RAGService(Node):
 
     def retrieve_documents_callback(
         self,
-        request: RetrieveDocuments.Request,
-        response: RetrieveDocuments.Response,
-    ) -> RetrieveDocuments.Response:
+        request: RetrieveDocuments_Request,
+        response: RetrieveDocuments_Response,
+    ) -> RetrieveDocuments_Response:
         """Handle RetrieveDocuments service requests.
 
         Processes a query and retrieves relevant documents from the
@@ -239,7 +242,7 @@ class RAGService(Node):
 
     def _populate_retrieve_response(
         self,
-        response: RetrieveDocuments.Response,
+        response: RetrieveDocuments_Response,
         result_dict: Dict[str, Any],
         query: str,
     ) -> None:
@@ -298,15 +301,32 @@ class RAGService(Node):
             Populated Metadata message.
         """
         metadata = Metadata()
-        metadata.source = doc_data.get('source', '')
-        metadata.node_name = doc_data.get('node_name', '')
-        metadata.node_function = doc_data.get('node_function', '')
-        metadata.log_level = doc_data.get('log_level', '')
+        metadata.source = str(doc_data.get('source', ''))
+        metadata.node_name = str(doc_data.get('node_name', ''))
+        metadata.node_function = str(doc_data.get('node_function', ''))
+
+        # log_level should be uint32, convert from string if needed
+        log_level_value = doc_data.get('log_level', 'INFO')
+        if isinstance(log_level_value, str):
+            # Map string log levels to their numeric values
+            log_level_map = {
+                'DEBUG': 10,
+                'INFO': 20,
+                'WARN': 30,
+                'WARNING': 30,
+                'ERROR': 40,
+                'FATAL': 50,
+                'UNKNOWN': 20
+            }
+            metadata.log_level = log_level_map.get(log_level_value.upper(), 20)
+        else:
+            metadata.log_level = int(log_level_value)
+
         return metadata
 
     def _handle_retrieve_error(
         self,
-        response: RetrieveDocuments.Response,
+        response: RetrieveDocuments_Response,
         error: Exception,
     ) -> None:
         """Handle retrieval error.
@@ -325,9 +345,9 @@ class RAGService(Node):
 
     def store_document_callback(
         self,
-        request: StoreDocument.Request,
-        response: StoreDocument.Response,
-    ) -> StoreDocument.Response:
+        request: StoreDocument_Request,
+        response: StoreDocument_Response,
+    ) -> StoreDocument_Response:
         """Handle StoreDocument service requests.
 
         Stores a new document in the RAG system's vector database
@@ -383,7 +403,7 @@ class RAGService(Node):
 
     def _populate_store_response(
         self,
-        response: StoreDocument.Response,
+        response: StoreDocument_Response,
         success: bool,
     ) -> None:
         """Populate store response based on operation result.
@@ -406,7 +426,7 @@ class RAGService(Node):
 
     def _handle_store_error(
         self,
-        response: StoreDocument.Response,
+        response: StoreDocument_Response,
         error: Exception,
     ) -> None:
         """Handle store operation error.

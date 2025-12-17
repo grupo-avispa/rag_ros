@@ -28,7 +28,8 @@ import json
 from typing import Dict, List, Optional, Any
 
 from langchain_chroma.vectorstores import Chroma
-from langchain_community.retrievers import BM25Retriever, EnsembleRetriever
+from langchain_community.retrievers import BM25Retriever
+from langchain_classic.retrievers import EnsembleRetriever
 from langchain_core.documents import Document
 from langchain_core.vectorstores.base import VectorStoreRetriever
 from langchain_huggingface import HuggingFaceEmbeddings
