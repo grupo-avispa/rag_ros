@@ -101,6 +101,17 @@ class RAGService(Node):
         self.get_logger().info(
             f'Parameter use_hybrid_search: [{self.use_hybrid_search}]')
 
+        self.declare_parameter('functions_filter', [''])
+        self.functions_filter = self.get_parameter(
+            'functions_filter').get_parameter_value().string_array_value
+        self.get_logger().info(
+            f'Parameter functions_filter: [{self.functions_filter}]')
+        
+        if not self.functions_filter:
+            self.get_logger().error(
+                'functions_filter is empty; Any log will be stored.'
+            )
+
     def _initialize_rag_server(self) -> RAGServer:
         """Initialize the RAG server with configured parameters.
 
@@ -454,7 +465,7 @@ class RAGService(Node):
             The Log message received from /rosout.
         """
         # Avoid storing the node's own logs
-        if msg.name == self.get_logger().name:
+        if msg.name == self.get_logger().name or msg.function not in self.functions_filter:
             return
 
         content = self._format_log_content(msg)

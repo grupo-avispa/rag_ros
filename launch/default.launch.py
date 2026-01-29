@@ -42,33 +42,23 @@ def generate_launch_description():
     venv_python = os.path.join(venv_path, 'bin', 'python') if venv_path else 'python3'
     # Get the launch directory
     rag_dir = get_package_share_directory('rag_ros')
+    default_params_file = os.path.join(rag_dir, 'params', 'params.yaml')
 
-    # Create the launch configuration variables
-    documents_directory = LaunchConfiguration('documents_directory')
-    chroma_directory = LaunchConfiguration('chroma_directory')
-    top_k = LaunchConfiguration('top_k')
-    use_hybrid_search = LaunchConfiguration('use_hybrid_search')
+    # Input parameters declaration
+    params_file = LaunchConfiguration('params_file')
 
-    # Declare launch arguments
-    declare_documents_directory_cmd = DeclareLaunchArgument(
-        'documents_directory',
-        default_value=os.path.join(rag_dir, 'files'),
-        description='Directory containing CSV and PDF files to index')
+    declare_params_file_arg = DeclareLaunchArgument(
+        'params_file',
+        default_value=default_params_file,
+        description='Full path to the ROS2 parameters file with detection configuration'
+    )
 
-    declare_chroma_directory_cmd = DeclareLaunchArgument(
-        'chroma_directory',
-        default_value=os.path.join(rag_dir, 'chroma_db'),
-        description='Directory where Chroma vector database persistence data will be stored')
-
-    declare_top_k_cmd = DeclareLaunchArgument(
-        'top_k',
-        default_value='8',
-        description='Default number of documents to retrieve')
-
-    declare_use_hybrid_search_cmd = DeclareLaunchArgument(
-        'use_hybrid_search',
-        default_value='true',
-        description='Enable hybrid search combining semantic + BM25 retrievers')
+    declare_log_level_arg = DeclareLaunchArgument(
+        name='log-level',
+        default_value='info',
+        description='Logging level (info, debug, ...)'
+    )
+    
 
     # RAG Service node
     rag_node_cmd = Node(
@@ -77,20 +67,11 @@ def generate_launch_description():
         name='rag_node',
         output='screen',
         prefix=[venv_python, ' -u '],
-        parameters=[{
-            'documents_directory': documents_directory,
-            'chroma_directory': chroma_directory,
-            'top_k': top_k,
-            'use_hybrid_search': use_hybrid_search,
-        }])
+        parameters=[params_file])
 
     # Create the launch description and populate
-    ld = LaunchDescription()
-
-    ld.add_action(declare_documents_directory_cmd)
-    ld.add_action(declare_chroma_directory_cmd)
-    ld.add_action(declare_top_k_cmd)
-    ld.add_action(declare_use_hybrid_search_cmd)
-    ld.add_action(rag_node_cmd)
-
-    return ld
+    return LaunchDescription([
+        declare_params_file_arg,
+        declare_log_level_arg,
+        rag_node_cmd
+    ])

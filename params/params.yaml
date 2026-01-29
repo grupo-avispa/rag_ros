@@ -1,0 +1,7 @@
+rag_node:
+  ros__parameters:
+    top_k: 8
+    use_hybrid_search: true
+    chroma_directory: "./chroma_db"
+    documents_directory: ""
+    functions_filter: ['detection_callback', 'executeCallback', 'initializeGoalPose']
