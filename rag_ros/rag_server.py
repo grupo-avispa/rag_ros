@@ -34,6 +34,7 @@ from langchain_core.documents import Document
 from langchain_core.vectorstores.base import VectorStoreRetriever
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_ollama import ChatOllama
 
 # Default configuration constants
 DEFAULT_EMBEDDING_MODEL = 'sentence-transformers/all-MiniLM-L6-v2'
@@ -62,6 +63,7 @@ class RAGServer:
         embedding_model: str = DEFAULT_EMBEDDING_MODEL,
         top_k: int = DEFAULT_TOP_K,
         use_hybrid_search: bool = True,
+        refinement_model: str = 'qwen3:0.6b',
     ) -> None:
         """Initialize server and (attempt to) build the vector index.
 
@@ -77,12 +79,15 @@ class RAGServer:
             Number of documents to retrieve by default.
         use_hybrid_search : bool
             Whether to use hybrid search (BM25 + semantic) (default: True).
+        refinement_model : str
+            Ollama model name for refining retrieved documents.
         """
         self.logger = logger
         self.chroma_directory = chroma_directory
         self.embedding_model = embedding_model
         self.top_k = top_k
         self.use_hybrid_search = use_hybrid_search
+        self.refinement_model = refinement_model
 
         # Initialize retrievers as None
         self.vector_db: Optional[Chroma] = None
@@ -888,3 +893,35 @@ class RAGServer:
             chunk_overlap=DEFAULT_CHUNK_OVERLAP,
         )
         return splitter.split_documents([document])
+
+    def refine_retrieved_response(
+        self,
+        doc_data: Dict[str, Any],
+        query: str,
+    ) -> str:
+        """Refine retrieved document content based on the query.
+
+        Parameters
+        ----------
+        doc_data : Dict[str, Any]
+            Retrieved document data.
+        query : str
+            Original search query.
+
+        Returns
+        -------
+        str
+            Refined document data.
+        """
+        ollama_model = ChatOllama(model=self.refinement_model)
+        prompt = (
+            f"Refine the following document content to better answer the query:\n"
+            f"Query: {query}\n"
+            f"If the document content does not relate to the query, respond: *Could not retrieve relevant information about that topic, sorry.*\n"
+            f"If the document content is related to the query, summarize it in one short sentence.\n"
+            f"Document Content: {doc_data}\n\n"
+            f"Refined Content:"
+        )
+        response = ollama_model.invoke(prompt)
+
+        return response.content.strip()

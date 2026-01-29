@@ -5,3 +5,4 @@ rag_node:
     chroma_directory: "./chroma_db"
     documents_directory: ""
     functions_filter: ['detection_callback', 'executeCallback', 'initializeGoalPose']
+    refinement_model: "qwen3:0.6b"  # Model used for refining retrieved documents

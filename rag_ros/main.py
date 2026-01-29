@@ -88,6 +88,16 @@ class RAGService(Node):
         self.get_logger().info(
             f'Parameter embedding_model: [{self.embedding_model}]')
 
+        # Refinement model
+        self.declare_parameter(
+            'refinement_model',
+            'qwen3:0.6b'
+        )
+        self.refinement_model = self.get_parameter(
+            'refinement_model').get_parameter_value().string_value
+        self.get_logger().info(
+            f'Parameter refinement_model: [{self.refinement_model}]')
+
         # Top k documents
         self.declare_parameter('top_k', 8)
         self.top_k = self.get_parameter(
@@ -132,6 +142,7 @@ class RAGService(Node):
                 embedding_model=self.embedding_model,
                 top_k=self.top_k,
                 use_hybrid_search=self.use_hybrid_search,
+                refinement_model=self.refinement_model,
             )
         except Exception as e:
             self.get_logger().error(f'Failed to initialize RAG server: {e}')
@@ -194,7 +205,7 @@ class RAGService(Node):
 
         try:
             result_dict = self._retrieve_and_parse_documents(query, k, filters)
-            self._populate_retrieve_response(response, result_dict, query)
+            self._populate_retrieve_response(response, result_dict, query, request.refine_rag)
         except ValueError as e:
             self._handle_retrieve_error(response, e)
 
@@ -256,6 +267,7 @@ class RAGService(Node):
         response: RetrieveDocuments_Response,
         result_dict: Dict[str, Any],
         query: str,
+        refine_rag: bool,
     ) -> None:
         """Populate retrieve response with results.
 
@@ -267,17 +279,49 @@ class RAGService(Node):
             Dictionary containing results.
         query : str
             Original query string.
+        refine_rag : bool
+            Whether to perform refinement on retrieved documents.
         """
         response.status = result_dict['status']
         response.total_results = result_dict['total_results']
-        response.results = [
-            self._create_document_msg(doc_data)
-            for doc_data in result_dict['results']
-        ]
+        if refine_rag:
+            response.results = [self._create_refined_document_msg(result_dict['results'], query)]
+        else:
+            response.results = [
+                self._create_document_msg(doc_data)
+                for doc_data in result_dict['results']
+            ]
 
         self.get_logger().info(
             f'Retrieved {response.total_results} documents for query: "{query}"'
         )
+    def _create_refined_document_msg(
+        self,
+        doc_data: Dict[str, Any],
+        query: str,
+    ) -> Document:
+        """Refine retrieved document response. By calling an external LLM.
+
+        Parameters
+        ----------
+        doc_data : Dict[str, Any]
+            Document data dictionary.
+        query : str
+            Original query string.
+
+        Returns
+        -------
+        Document
+            Refined Document message.
+        """
+        refined_content = self.rag_server.refine_retrieved_response(
+            doc_data,
+            query
+        )
+        doc = Document()
+        doc.id = 0  # ID is not relevant for refined documents
+        doc.content = refined_content
+        return doc
 
     def _create_document_msg(self, doc_data: Dict[str, Any]) -> Document:
         """Create Document message from document data.
