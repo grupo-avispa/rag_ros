@@ -917,10 +917,9 @@ class RAGServer:
         prompt = (
             f"Refine the following document content to better answer the query:\n"
             f"Query: {query}\n"
-            f"If the document content does not relate to the query, respond: *Could not retrieve relevant information about that topic, sorry.*\n"
-            f"If the document content is related to the query, summarize it in one short sentence.\n"
+            f"If the document content does not contain the query, respond: Could not retrieve relevant information about that topic, sorry.\n"
+            f"If the document content is related to the query, summarize it in one short sentence (maximum 20 words).\n"
             f"Document Content: {doc_data}\n\n"
-            f"Refined Content:"
         )
         response = ollama_model.invoke(prompt)
 
